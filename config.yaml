@@ -1,0 +1,21 @@
+seed: 7
+device: auto
+walk:
+    T: 100
+    paths: 50000
+dataset:
+    save_path: data/15_puzzle_jepa
+model:
+    checkpoint_path: models/15_puzzle_successor_score.pt
+training:
+    batch_size: 256
+    learning_rate: 0.001
+    weight_decay: 0.0001
+sigreg:
+    weight: 0.01
+    batch_size: 512
+    sketch_dim: 64
+solver:
+    state: [12, 11, 2, 10, 8, 5, 6, 15, 0, 1, 7, 9, 4, 14, 13, 3]
+    beam_width: 64
+    max_depth: 100
