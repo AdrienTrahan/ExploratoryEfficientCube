@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import numpy as np
+import torch
 from torch.utils.data import Dataset
 
 
@@ -124,6 +125,69 @@ class PuzzleWalkDataset(Dataset):
         path_ids = np.repeat(np.arange(paths), length)
         steps = np.tile(np.arange(1, length + 1), paths)
         return cls(states, moves, path_ids, steps)
+
+    @classmethod
+    def generate_from_model(cls, model, paths, length, seed, temperature=0.5):
+        if paths < 1:
+            raise ValueError("paths must be positive")
+        if length < 1:
+            raise ValueError("length must be positive")
+        rng = np.random.default_rng(seed)
+        device = next(model.parameters()).device
+        states = np.tile(solved_state(), (paths, 1))
+        path_states = np.empty((paths, length, 16), dtype=np.uint8)
+        path_moves = np.empty((paths, length), dtype=np.int64)
+        last_percent = -1
+        model.eval()
+        with torch.inference_mode():
+            for step in range(length):
+                successors, state_indices, move_indices = successor_batch(states)
+                successor_tensor = torch.as_tensor(
+                    successors, dtype=torch.long, device=device
+                )
+                state_index_tensor = torch.as_tensor(
+                    state_indices, device=device
+                )
+                move_index_tensor = torch.as_tensor(
+                    move_indices, device=device
+                )
+                successor_logits = model(successor_tensor)
+                logits = torch.full(
+                    (paths, len(MOVE_NAMES)), -torch.inf, device=device
+                )
+                logits[state_index_tensor, move_index_tensor] = successor_logits
+                probabilities = torch.softmax(logits / temperature, dim=1).cpu().numpy()
+                cumulative = np.cumsum(probabilities, axis=1)
+                cumulative[:, -1] = 1
+                moves = (rng.random(paths)[:, None] >= cumulative).sum(axis=1)
+
+                rows = np.arange(paths)
+                blanks = np.argmax(states == 0, axis=1)
+                destinations = blanks + np.asarray(MOVE_OFFSETS)[moves]
+                next_states = states.copy()
+                next_states[rows, blanks] = states[rows, destinations]
+                next_states[rows, destinations] = 0
+                path_states[:, step] = next_states
+                path_moves[:, step] = moves
+                states = next_states
+
+                percent = (step + 1) * 100 // length
+                if percent > last_percent:
+                    print(
+                        f"\rGenerating model paths: {step + 1}/{length} ({percent}%)",
+                        end="",
+                        flush=True,
+                    )
+                    last_percent = percent
+        print()
+        path_ids = np.repeat(np.arange(paths), length)
+        steps = np.tile(np.arange(1, length + 1), paths)
+        return cls(
+            path_states.reshape(-1, 16),
+            path_moves.reshape(-1),
+            path_ids,
+            steps,
+        )
 
     def __len__(self):
         return len(self.moves)

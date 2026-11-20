@@ -32,10 +32,10 @@ def normalize_state(state):
     return state.astype(np.uint8)
 
 
-def load_model(config):
+def load_model(config, model_key="model"):
     device = resolve_device(config["device"])
     model = FifteenPuzzleModel().to(device)
-    checkpoint_path = Path(config["model"]["checkpoint_path"])
+    checkpoint_path = Path(config[model_key]["checkpoint_path"])
     if not checkpoint_path.is_absolute():
         checkpoint_path = CONFIG_PATH.parent / checkpoint_path
     if not checkpoint_path.exists():
@@ -82,7 +82,7 @@ def beam_search(state, model, beam_width, max_depth):
 
             for node, parent_successors in zip(beam, successors_by_parent):
                 probabilities = torch.softmax(
-                    successor_logits[parent_successors], dim=0
+                    -successor_logits[parent_successors], dim=0
                 ).cpu().numpy()
                 for successor_index, probability in zip(
                     parent_successors, probabilities

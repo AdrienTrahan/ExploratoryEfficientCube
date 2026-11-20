@@ -1,16 +1,26 @@
 seed: 7
 device: auto
 walk:
-    T: 100
+    T: 80
     paths: 50000
 dataset:
     save_path: data/15_puzzle_jepa
+    model_sampled_save_paths:
+        "1.0": data/15_puzzle_jepa_non_random
+        "0.5": data/15_puzzle_jepa_non_random_t0_5
+        # "0.2": data/15_puzzle_jepa_non_random_t0_2
+        # "0.1": data/15_puzzle_jepa_non_random_t0_1
 model:
     checkpoint_path: models/15_puzzle_successor_score.pt
 training:
     batch_size: 256
     learning_rate: 0.001
     weight_decay: 0.0001
+self_training:
+    iterations: 0
+    temperature: 0.1
+    checkpoint_path_template: models/15_puzzle_successor_score_model{number}.pt
+    dataset_path_template: data/15_puzzle_model{number}_non_random
 solver:
     state: [12, 11, 2, 10, 8, 5, 6, 15, 0, 1, 7, 9, 4, 14, 13, 3]
     beam_width: 64

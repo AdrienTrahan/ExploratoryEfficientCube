@@ -2,7 +2,6 @@ from pathlib import Path
 
 import numpy as np
 import torch
-import torch.nn.functional as F
 from torch.utils.tensorboard import SummaryWriter
 
 from config import CONFIG_PATH, load_config, resolve_device
@@ -10,37 +9,25 @@ from fifteen_puzzle import INVERSE_MOVES, PuzzleWalkDataset, successor_batch
 from model import FifteenPuzzleModel
 
 
-def train(config):
+def checkpoint_path(config, model_key):
+    path = Path(config[model_key]["checkpoint_path"])
+    return path if path.is_absolute() else CONFIG_PATH.parent / path
+
+
+def train_on_dataset(config, dataset, model_key="model", initial_model_key=None):
     seed = config["seed"]
     rng = np.random.default_rng(seed)
     torch.manual_seed(seed)
     device = resolve_device(config["device"])
-
-    save_path = config["dataset"]["save_path"]
-    dataset_path = Path(save_path) if save_path else None
-    if dataset_path is not None and not dataset_path.is_absolute():
-        dataset_path = CONFIG_PATH.parent / dataset_path
-
-    if dataset_path is not None and dataset_path.exists():
-        with np.load(dataset_path) as saved:
-            dataset = PuzzleWalkDataset(
-                saved["states"],
-                saved["moves"],
-                saved["path_ids"],
-                saved["steps"],
-            )
-        print(f"Loaded dataset: {dataset_path}")
-    else:
-        dataset = PuzzleWalkDataset.generate(
-            paths=config["walk"]["paths"],
-            length=config["walk"]["T"],
-            seed=seed,
-        )
-        if dataset_path is not None:
-            dataset.save(dataset_path)
-            print(f"Saved dataset: {dataset_path}")
-
     model = FifteenPuzzleModel().to(device)
+    if initial_model_key is not None:
+        model.load_state_dict(
+            torch.load(
+                checkpoint_path(config, initial_model_key),
+                map_location=device,
+                weights_only=True,
+            )
+        )
     optimizer = torch.optim.AdamW(
         model.parameters(),
         lr=config["training"]["learning_rate"],
@@ -79,7 +66,11 @@ def train(config):
         successor_logits = model(successor_tensor)
         logits = torch.full((len(batch_indices), 4), -torch.inf, device=device)
         logits[state_indices, move_indices] = successor_logits
-        successor_loss = F.cross_entropy(logits, targets)
+        probabilities = torch.softmax(logits, dim=1)
+        target_probabilities = probabilities.gather(1, targets[:, None])
+        successor_loss = -torch.log1p(
+            -target_probabilities.clamp(max=1 - 1e-7)
+        ).mean()
 
         optimizer.zero_grad(set_to_none=True)
         successor_loss.backward()
@@ -96,22 +87,46 @@ def train(config):
             )
             last_progress = progress
 
-        writer.add_scalar(
-            "loss/successor_cross_entropy", successor_loss.item(), processed_states
-        )
+        writer.add_scalar("loss/target_suppression", successor_loss.item(), processed_states)
 
     print(f"\rTraining paths: {path_count}/{path_count} (100%)")
     writer.flush()
     print(f"TensorBoard run: {writer.log_dir}")
     writer.close()
 
-    checkpoint_path = Path(config["model"]["checkpoint_path"])
-    if not checkpoint_path.is_absolute():
-        checkpoint_path = CONFIG_PATH.parent / checkpoint_path
-    checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
-    torch.save(model.state_dict(), checkpoint_path)
-    print(f"Model checkpoint: {checkpoint_path}")
+    output_path = checkpoint_path(config, model_key)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    torch.save(model.state_dict(), output_path)
+    print(f"Model checkpoint: {output_path}")
     return model, dataset
+
+
+def train(config):
+    seed = config["seed"]
+    save_path = config["dataset"]["save_path"]
+    dataset_path = Path(save_path) if save_path else None
+    if dataset_path is not None and not dataset_path.is_absolute():
+        dataset_path = CONFIG_PATH.parent / dataset_path
+
+    if dataset_path is not None and dataset_path.exists():
+        with np.load(dataset_path) as saved:
+            dataset = PuzzleWalkDataset(
+                saved["states"],
+                saved["moves"],
+                saved["path_ids"],
+                saved["steps"],
+            )
+        print(f"Loaded dataset: {dataset_path}")
+    else:
+        dataset = PuzzleWalkDataset.generate(
+            paths=config["walk"]["paths"],
+            length=config["walk"]["T"],
+            seed=seed,
+        )
+        if dataset_path is not None:
+            dataset.save(dataset_path)
+            print(f"Saved dataset: {dataset_path}")
+    return train_on_dataset(config, dataset)
 
 
 def main():
