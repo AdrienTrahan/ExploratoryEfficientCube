@@ -7,8 +7,7 @@ from torch.utils.tensorboard import SummaryWriter
 
 from config import CONFIG_PATH, load_config, resolve_device
 from fifteen_puzzle import INVERSE_MOVES, PuzzleWalkDataset, successor_batch
-from model import Jepa15PuzzleModel
-from sigreg import sigreg_strong_loss, sigreg_weak_loss
+from model import FifteenPuzzleModel
 
 
 def train(config):
@@ -41,7 +40,7 @@ def train(config):
             dataset.save(dataset_path)
             print(f"Saved dataset: {dataset_path}")
 
-    model = Jepa15PuzzleModel().to(device)
+    model = FifteenPuzzleModel().to(device)
     optimizer = torch.optim.AdamW(
         model.parameters(),
         lr=config["training"]["learning_rate"],
@@ -64,10 +63,11 @@ def train(config):
 
     for start in range(0, len(ordered_indices), batch_size):
         batch_indices = ordered_indices[start : start + batch_size]
-        # sigreg_indices = dataset.sample_indices(config["sigreg"]["batch_size"], rng)
         states = dataset.states[batch_indices]
         successors, state_indices, move_indices = successor_batch(states)
-        successor_states = torch.as_tensor(successors.astype(np.int64), device=device)
+        successor_tensor = torch.as_tensor(
+            successors, dtype=torch.long, device=device
+        )
         state_indices = torch.as_tensor(state_indices, device=device)
         move_indices = torch.as_tensor(move_indices, device=device)
         targets = torch.as_tensor(
@@ -75,21 +75,14 @@ def train(config):
             dtype=torch.long,
             device=device,
         )
-        # sigreg_states = torch.as_tensor(
-        #     dataset.states[sigreg_indices].astype(np.int64), device=device
-        # )
 
-        successor_scores, _ = model(successor_states)
+        successor_logits = model(successor_tensor)
         logits = torch.full((len(batch_indices), 4), -torch.inf, device=device)
-        logits[state_indices, move_indices] = successor_scores
-        puzzle_loss = F.cross_entropy(logits, targets)
-        # sigreg_loss = sigreg_strong_loss(
-        #     model.encoder(sigreg_states),
-        # )
-        total_loss = puzzle_loss # + config["sigreg"]["weight"] * sigreg_loss
+        logits[state_indices, move_indices] = successor_logits
+        successor_loss = F.cross_entropy(logits, targets)
 
         optimizer.zero_grad(set_to_none=True)
-        total_loss.backward()
+        successor_loss.backward()
         optimizer.step()
 
         processed_states = start + len(batch_indices)
@@ -103,9 +96,9 @@ def train(config):
             )
             last_progress = progress
 
-        writer.add_scalar("loss/total", total_loss.item(), processed_states)
-        writer.add_scalar("loss/efficient_puzzle", puzzle_loss.item(), processed_states)
-        # writer.add_scalar("loss/sigreg", sigreg_loss.item(), processed_states)
+        writer.add_scalar(
+            "loss/successor_cross_entropy", successor_loss.item(), processed_states
+        )
 
     print(f"\rTraining paths: {path_count}/{path_count} (100%)")
     writer.flush()

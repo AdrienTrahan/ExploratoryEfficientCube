@@ -131,9 +131,6 @@ class PuzzleWalkDataset(Dataset):
     def __getitem__(self, index):
         return self.states[index], self.moves[index]
 
-    def sample_indices(self, count, rng):
-        return rng.choice(len(self), size=count, replace=count > len(self))
-
     def save(self, path):
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)

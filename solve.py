@@ -6,7 +6,7 @@ import torch
 
 from fifteen_puzzle import MOVE_NAMES, apply_move, legal_moves, solved_state
 from config import CONFIG_PATH, load_config, resolve_device
-from model import Jepa15PuzzleModel
+from model import FifteenPuzzleModel
 
 
 @dataclass
@@ -34,7 +34,7 @@ def normalize_state(state):
 
 def load_model(config):
     device = resolve_device(config["device"])
-    model = Jepa15PuzzleModel().to(device)
+    model = FifteenPuzzleModel().to(device)
     checkpoint_path = Path(config["model"]["checkpoint_path"])
     if not checkpoint_path.is_absolute():
         checkpoint_path = CONFIG_PATH.parent / checkpoint_path
@@ -62,32 +62,33 @@ def beam_search(state, model, beam_width, max_depth):
 
     with torch.inference_mode():
         for _ in range(max_depth):
-            candidate_states = []
-            candidate_moves = []
-            candidates_by_parent = []
+            successor_states = []
+            successor_moves = []
+            successors_by_parent = []
             for node in beam:
-                parent_candidates = []
+                parent_successors = []
                 for move in legal_moves(node.state):
-                    parent_candidates.append(len(candidate_states))
-                    candidate_states.append(apply_move(node.state, move))
-                    candidate_moves.append(move)
-                candidates_by_parent.append(parent_candidates)
+                    parent_successors.append(len(successor_states))
+                    successor_states.append(apply_move(node.state, move))
+                    successor_moves.append(move)
+                successors_by_parent.append(parent_successors)
 
-            successor_states = torch.as_tensor(
-                np.stack(candidate_states).astype(np.int64),
-                device=device,
+            successor_tensor = torch.as_tensor(
+                np.stack(successor_states), dtype=torch.long, device=device
             )
-            successor_scores, _ = model(successor_states)
+            successor_logits = model(successor_tensor)
             best_by_state = {}
             best_solution = None
 
-            for node, parent_candidates in zip(beam, candidates_by_parent):
+            for node, parent_successors in zip(beam, successors_by_parent):
                 probabilities = torch.softmax(
-                    successor_scores[parent_candidates], dim=0
+                    successor_logits[parent_successors], dim=0
                 ).cpu().numpy()
-                for candidate_index, probability in zip(parent_candidates, probabilities):
-                    move = candidate_moves[candidate_index]
-                    next_state = candidate_states[candidate_index]
+                for successor_index, probability in zip(
+                    parent_successors, probabilities
+                ):
+                    move = successor_moves[successor_index]
+                    next_state = successor_states[successor_index]
                     score = node.score + float(np.log(max(float(probability), 1e-12)))
                     if np.array_equal(next_state, goal):
                         if best_solution is None or score > best_solution[0]:

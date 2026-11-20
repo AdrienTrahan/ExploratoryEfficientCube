@@ -12,5 +12,3 @@ dependencies = [
     "torch>=2.4",
 ]
 
-[project.urls]
-SIGReg = "https://github.com/kreasof-ai/sigreg"
